@@ -40,7 +40,7 @@ private:
     int m_previewW = 0;
     int m_previewH = 0;
 
-    int m_selectedDataTypeIdx = 0; // 0=Int32, 1=Int64, 2=Float, 3=Double
+    int m_selectedDataTypeIdx = 0; // 0=Int32, 1=Int64, 2=Float, 3=Double, 4=String
     int m_targetThreshold = 3;
     bool m_autoContinuousMode = true;
 

@@ -50,3 +50,10 @@ namespace StringUtils {
     bool ParseInt64(const std::string& str, int64_t& outValue);
     bool ParseDouble(const std::string& str, double& outValue);
 }
+
+namespace PrivilegeUtils {
+    bool IsRunningAsAdmin();
+    bool RelaunchAsAdmin(HWND hwndParent = nullptr, const wchar_t* cmdLine = nullptr);
+    bool EnableDebugPrivilege();
+}
+

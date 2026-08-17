@@ -8,6 +8,7 @@
 #include "backends/imgui_impl_win32.h"
 #include "backends/imgui_impl_dx11.h"
 #include "App.h"
+#include "Utils.h"
 
 // Forward declare message handler from imgui_impl_win32.cpp
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -25,6 +26,27 @@ void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+    // Verify Administrator Privileges on startup
+    if (!PrivilegeUtils::IsRunningAsAdmin()) {
+        // Attempt to relaunch process requesting UAC elevation (Run As Administrator)
+        if (PrivilegeUtils::RelaunchAsAdmin(nullptr, pCmdLine)) {
+            // Elevated process started; terminate current un-elevated instance
+            return 0;
+        }
+
+        // Elevation was refused or failed; inform user
+        MessageBoxW(
+            nullptr,
+            L"AutoTrainer requer privilégios de Administrador para aceder à memória de processos e efetuar capturas de ecrã.\n\nPor favor, execute a aplicação como Administrador.",
+            L"AutoTrainer - Permissões de Administrador",
+            MB_ICONWARNING | MB_OK
+        );
+        return 1;
+    }
+
+    // Enable SeDebugPrivilege for unrestricted process memory access
+    PrivilegeUtils::EnableDebugPrivilege();
+
     // Initialize C++/WinRT multithreaded apartment
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
 

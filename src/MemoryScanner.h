@@ -12,13 +12,15 @@ enum class ScanDataType {
     Int32,
     Int64,
     Float,
-    Double
+    Double,
+    String
 };
 
 struct ScanValue {
     ScanDataType type = ScanDataType::Int32;
     int64_t intVal = 0;
     double doubleVal = 0.0;
+    std::string stringVal;
 
     bool Matches(const void* buffer, size_t offset) const;
     std::string ToString() const;
@@ -30,9 +32,12 @@ struct CandidateAddress {
     int64_t previousValueInt = 0;
     double currentValueDouble = 0.0;
     double previousValueDouble = 0.0;
+    std::string currentValueString;
+    std::string previousValueString;
     bool isLocked = false;
     int64_t lockValueInt = 0;
     double lockValueDouble = 0.0;
+    std::string lockValueString;
 };
 
 class MemoryScanner {

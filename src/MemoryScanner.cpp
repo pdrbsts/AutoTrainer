@@ -22,6 +22,10 @@ bool ScanValue::Matches(const void* buffer, size_t offset) const {
         double val = *reinterpret_cast<const double*>(ptr);
         return std::fabs(val - doubleVal) < 0.0001;
     }
+    case ScanDataType::String: {
+        if (stringVal.empty()) return false;
+        return memcmp(ptr, stringVal.data(), stringVal.size()) == 0;
+    }
     }
     return false;
 }
@@ -32,6 +36,7 @@ std::string ScanValue::ToString() const {
     case ScanDataType::Int64: return std::to_string(intVal);
     case ScanDataType::Float: return std::to_string(static_cast<float>(doubleVal));
     case ScanDataType::Double: return std::to_string(doubleVal);
+    case ScanDataType::String: return stringVal;
     }
     return "";
 }
@@ -165,6 +170,9 @@ void MemoryScanner::DoFirstScan(ScanValue targetValue, std::function<void(size_t
     if (targetValue.type == ScanDataType::Int64 || targetValue.type == ScanDataType::Double) {
         valSize = 8;
         if (m_alignToType) step = 8;
+    } else if (targetValue.type == ScanDataType::String) {
+        valSize = std::max((size_t)1, targetValue.stringVal.size());
+        step = 1;
     }
 
     for (const auto& reg : regions) {
@@ -185,6 +193,8 @@ void MemoryScanner::DoFirstScan(ScanValue targetValue, std::function<void(size_t
                         cand.previousValueInt = targetValue.intVal;
                         cand.currentValueDouble = targetValue.doubleVal;
                         cand.previousValueDouble = targetValue.doubleVal;
+                        cand.currentValueString = targetValue.stringVal;
+                        cand.previousValueString = targetValue.stringVal;
                         foundList.push_back(cand);
                     }
                 }
@@ -232,19 +242,27 @@ void MemoryScanner::DoNextScan(ScanValue targetValue, std::function<void(size_t)
     size_t total = currentCandidates.size();
     size_t processed = 0;
 
-    size_t valSize = (targetValue.type == ScanDataType::Int64 || targetValue.type == ScanDataType::Double) ? 8 : 4;
-    uint8_t buffer[8] = { 0 };
+    size_t valSize = 4;
+    if (targetValue.type == ScanDataType::Int64 || targetValue.type == ScanDataType::Double) {
+        valSize = 8;
+    } else if (targetValue.type == ScanDataType::String) {
+        valSize = std::max((size_t)1, targetValue.stringVal.size());
+    }
+
+    std::vector<uint8_t> buffer(std::max(valSize, (size_t)8), 0);
 
     for (auto& cand : currentCandidates) {
         if (m_cancelRequested) break;
 
         SIZE_T bytesRead = 0;
-        if (ReadProcessMemory(m_hProcess, reinterpret_cast<LPCVOID>(cand.address), buffer, valSize, &bytesRead) && bytesRead == valSize) {
-            if (targetValue.Matches(buffer, 0)) {
+        if (ReadProcessMemory(m_hProcess, reinterpret_cast<LPCVOID>(cand.address), buffer.data(), valSize, &bytesRead) && bytesRead == valSize) {
+            if (targetValue.Matches(buffer.data(), 0)) {
                 cand.previousValueInt = cand.currentValueInt;
                 cand.previousValueDouble = cand.currentValueDouble;
+                cand.previousValueString = cand.currentValueString;
                 cand.currentValueInt = targetValue.intVal;
                 cand.currentValueDouble = targetValue.doubleVal;
+                cand.currentValueString = targetValue.stringVal;
                 survivingCandidates.push_back(cand);
             }
         }
@@ -278,21 +296,33 @@ void MemoryScanner::RefreshCandidateValues() {
 
     std::lock_guard<std::mutex> lock(m_candidatesMutex);
     size_t valSize = (m_currentDataType == ScanDataType::Int64 || m_currentDataType == ScanDataType::Double) ? 8 : 4;
-    uint8_t buffer[8] = { 0 };
+    if (m_currentDataType == ScanDataType::String) {
+        valSize = 64;
+    }
+    std::vector<uint8_t> buffer(valSize, 0);
 
     for (auto& cand : m_candidates) {
         SIZE_T bytesRead = 0;
-        if (ReadProcessMemory(m_hProcess, reinterpret_cast<LPCVOID>(cand.address), buffer, valSize, &bytesRead) && bytesRead == valSize) {
+        if (ReadProcessMemory(m_hProcess, reinterpret_cast<LPCVOID>(cand.address), buffer.data(), valSize, &bytesRead) && bytesRead > 0) {
             cand.previousValueInt = cand.currentValueInt;
             cand.previousValueDouble = cand.currentValueDouble;
-            if (m_currentDataType == ScanDataType::Int32) {
-                cand.currentValueInt = *reinterpret_cast<int32_t*>(buffer);
-            } else if (m_currentDataType == ScanDataType::Int64) {
-                cand.currentValueInt = *reinterpret_cast<int64_t*>(buffer);
-            } else if (m_currentDataType == ScanDataType::Float) {
-                cand.currentValueDouble = *reinterpret_cast<float*>(buffer);
-            } else if (m_currentDataType == ScanDataType::Double) {
-                cand.currentValueDouble = *reinterpret_cast<double*>(buffer);
+            cand.previousValueString = cand.currentValueString;
+            if (m_currentDataType == ScanDataType::Int32 && bytesRead >= 4) {
+                cand.currentValueInt = *reinterpret_cast<int32_t*>(buffer.data());
+            } else if (m_currentDataType == ScanDataType::Int64 && bytesRead >= 8) {
+                cand.currentValueInt = *reinterpret_cast<int64_t*>(buffer.data());
+            } else if (m_currentDataType == ScanDataType::Float && bytesRead >= 4) {
+                cand.currentValueDouble = *reinterpret_cast<float*>(buffer.data());
+            } else if (m_currentDataType == ScanDataType::Double && bytesRead >= 8) {
+                cand.currentValueDouble = *reinterpret_cast<double*>(buffer.data());
+            } else if (m_currentDataType == ScanDataType::String) {
+                std::string s;
+                for (size_t b = 0; b < bytesRead; ++b) {
+                    char c = static_cast<char>(buffer[b]);
+                    if (c == '\0') break;
+                    s.push_back(c);
+                }
+                cand.currentValueString = s;
             }
         }
     }
@@ -302,37 +332,47 @@ bool MemoryScanner::WriteValue(uintptr_t address, const ScanValue& value) {
     if (!m_hProcess) return false;
 
     size_t valSize = 4;
-    uint8_t buffer[8] = { 0 };
+    std::vector<uint8_t> buffer;
 
     switch (value.type) {
     case ScanDataType::Int32: {
         valSize = 4;
+        buffer.resize(4);
         int32_t v = static_cast<int32_t>(value.intVal);
-        memcpy(buffer, &v, 4);
+        memcpy(buffer.data(), &v, 4);
         break;
     }
     case ScanDataType::Int64: {
         valSize = 8;
+        buffer.resize(8);
         int64_t v = value.intVal;
-        memcpy(buffer, &v, 8);
+        memcpy(buffer.data(), &v, 8);
         break;
     }
     case ScanDataType::Float: {
         valSize = 4;
+        buffer.resize(4);
         float v = static_cast<float>(value.doubleVal);
-        memcpy(buffer, &v, 4);
+        memcpy(buffer.data(), &v, 4);
         break;
     }
     case ScanDataType::Double: {
         valSize = 8;
+        buffer.resize(8);
         double v = value.doubleVal;
-        memcpy(buffer, &v, 8);
+        memcpy(buffer.data(), &v, 8);
+        break;
+    }
+    case ScanDataType::String: {
+        valSize = value.stringVal.size() + 1; // Include null-terminator for string writes
+        buffer.resize(valSize);
+        memcpy(buffer.data(), value.stringVal.c_str(), valSize);
         break;
     }
     }
 
     SIZE_T bytesWritten = 0;
-    BOOL res = WriteProcessMemory(m_hProcess, reinterpret_cast<LPVOID>(address), buffer, valSize, &bytesWritten);
+    BOOL res = WriteProcessMemory(m_hProcess, reinterpret_cast<LPVOID>(address), buffer.data(), valSize, &bytesWritten);
     if (res && bytesWritten == valSize) {
         LOG_SUCCESS("Wrote " + value.ToString() + " to " + StringUtils::FormatAddress(address));
         {
@@ -341,11 +381,14 @@ bool MemoryScanner::WriteValue(uintptr_t address, const ScanValue& value) {
                 if (cand.address == address) {
                     cand.previousValueInt = cand.currentValueInt;
                     cand.previousValueDouble = cand.currentValueDouble;
+                    cand.previousValueString = cand.currentValueString;
                     cand.currentValueInt = value.intVal;
                     cand.currentValueDouble = value.doubleVal;
+                    cand.currentValueString = value.stringVal;
                     if (cand.isLocked) {
                         cand.lockValueInt = value.intVal;
                         cand.lockValueDouble = value.doubleVal;
+                        cand.lockValueString = value.stringVal;
                     }
                     break;
                 }
@@ -362,27 +405,48 @@ bool MemoryScanner::ReadValue(uintptr_t address, ScanDataType type, ScanValue& o
 
     outVal.type = type;
     size_t valSize = (type == ScanDataType::Int64 || type == ScanDataType::Double) ? 8 : 4;
-    uint8_t buffer[8] = { 0 };
+    if (type == ScanDataType::String) {
+        valSize = 64;
+    }
+    std::vector<uint8_t> buffer(valSize, 0);
 
     SIZE_T bytesRead = 0;
-    if (ReadProcessMemory(m_hProcess, reinterpret_cast<LPCVOID>(address), buffer, valSize, &bytesRead) && bytesRead == valSize) {
+    if (ReadProcessMemory(m_hProcess, reinterpret_cast<LPCVOID>(address), buffer.data(), valSize, &bytesRead) && bytesRead > 0) {
         switch (type) {
         case ScanDataType::Int32:
-            outVal.intVal = *reinterpret_cast<int32_t*>(buffer);
+            if (bytesRead < 4) return false;
+            outVal.intVal = *reinterpret_cast<int32_t*>(buffer.data());
             outVal.doubleVal = static_cast<double>(outVal.intVal);
+            outVal.stringVal = std::to_string(outVal.intVal);
             break;
         case ScanDataType::Int64:
-            outVal.intVal = *reinterpret_cast<int64_t*>(buffer);
+            if (bytesRead < 8) return false;
+            outVal.intVal = *reinterpret_cast<int64_t*>(buffer.data());
             outVal.doubleVal = static_cast<double>(outVal.intVal);
+            outVal.stringVal = std::to_string(outVal.intVal);
             break;
         case ScanDataType::Float:
-            outVal.doubleVal = *reinterpret_cast<float*>(buffer);
+            if (bytesRead < 4) return false;
+            outVal.doubleVal = *reinterpret_cast<float*>(buffer.data());
             outVal.intVal = static_cast<int64_t>(outVal.doubleVal);
+            outVal.stringVal = std::to_string(static_cast<float>(outVal.doubleVal));
             break;
         case ScanDataType::Double:
-            outVal.doubleVal = *reinterpret_cast<double*>(buffer);
+            if (bytesRead < 8) return false;
+            outVal.doubleVal = *reinterpret_cast<double*>(buffer.data());
             outVal.intVal = static_cast<int64_t>(outVal.doubleVal);
+            outVal.stringVal = std::to_string(outVal.doubleVal);
             break;
+        case ScanDataType::String: {
+            std::string s;
+            for (size_t b = 0; b < bytesRead; ++b) {
+                char c = static_cast<char>(buffer[b]);
+                if (c == '\0') break;
+                s.push_back(c);
+            }
+            outVal.stringVal = s;
+            break;
+        }
         }
         return true;
     }
@@ -396,6 +460,7 @@ void MemoryScanner::SetAddressLock(uintptr_t address, bool lock, const ScanValue
             cand.isLocked = lock;
             cand.lockValueInt = val.intVal;
             cand.lockValueDouble = val.doubleVal;
+            cand.lockValueString = val.stringVal;
             break;
         }
     }
@@ -417,6 +482,7 @@ void MemoryScanner::LockThreadLoop() {
                 val.type = m_currentDataType;
                 val.intVal = cand.lockValueInt;
                 val.doubleVal = cand.lockValueDouble;
+                val.stringVal = cand.lockValueString;
                 WriteValue(cand.address, val);
             }
         }

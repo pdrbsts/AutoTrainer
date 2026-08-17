@@ -43,7 +43,7 @@ flowchart TD
 
 3. **Fast Memory Scanner Engine (Cheat Engine Style)**:
    - Supports both **32-bit (x86)** and **64-bit (x64)** target processes.
-   - Supported data types: **Int32 (4 Bytes)**, **Int64 (8 Bytes)**, **Float (4 Bytes)**, and **Double (8 Bytes)**.
+   - Supported data types: **Int32 (4 Bytes)**, **Int64 (8 Bytes)**, **Float (4 Bytes)**, **Double (8 Bytes)**, and **String (ASCII / UTF-8 Text)**.
    - Block-based First Scan with continuous page discovery (`PAGE_READWRITE`, `PAGE_EXECUTE_READWRITE`).
    - Ultra-fast Next Scan (Filtering) iterating strictly across surviving candidate addresses.
    - Asynchronous background worker thread with progress reporting and cancellation support.
@@ -59,7 +59,12 @@ flowchart TD
    - **Freeze** checkbox powered by a dedicated high-frequency lock thread.
    - In-place **Edit** modal dialog with quick preset buttons (`+500`, `+5,000`, `999,999`, `Max 32-bit`) and keyboard shortcut support (`Enter` to apply).
 
-6. **Included Test RPG Game (`MockGame.exe`)**:
+6. **Administrator Privilege Elevation (UAC & SeDebugPrivilege)**:
+   - Configured with embedded application manifest (`requireAdministrator`) triggering Windows UAC elevation automatically on startup.
+   - Automatically acquires `SeDebugPrivilege` to inspect, scan, and modify memory of any game or protected process without restriction.
+   - Programmatic runtime fallback that requests elevation if launched without administrator rights.
+
+7. **Included Test RPG Game (`MockGame.exe`)**:
    - Bundled mock RPG game to test and verify the entire end-to-end workflow immediately without external games.
 
 ---

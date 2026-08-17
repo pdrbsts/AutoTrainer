@@ -6,6 +6,7 @@
 volatile int32_t g_playerAura = 1500;
 volatile int32_t g_playerGold = 8200;
 volatile int32_t g_playerHealth = 100;
+char g_playerRank[32] = "GrandMaster";
 bool g_autoMode = false;
 
 const wchar_t* WINDOW_CLASS_NAME = L"MockGameWindowClass";
@@ -39,7 +40,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             OUT_OUTLINE_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, VARIABLE_PITCH, L"Segoe UI");
         SelectObject(hdc, hSubFont);
         SetTextColor(hdc, RGB(120, 140, 160));
-        TextOutW(hdc, 20, 50, L"Controls: [Space] Aura +250 | [Backspace] Aura -100 | [A] Auto-cycle | [Esc] Exit", 78);
+        TextOutW(hdc, 20, 50, L"Controls: [Space] Aura +250 | [R] Cycle Rank | [Backspace] Aura -100 | [A] Auto | [Esc] Exit", 92);
 
         // Aura Display Box
         RECT auraBox = { 30, 90, 450, 200 };
@@ -69,10 +70,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         // Secondary stats
         SelectObject(hdc, hSubFont);
         SetTextColor(hdc, RGB(160, 170, 180));
-        std::wstring statsStr = L"Gold: " + std::to_wstring(g_playerGold) + L"   |   Health: " + std::to_wstring(g_playerHealth);
+        wchar_t wRank[64] = { 0 };
+        MultiByteToWideChar(CP_UTF8, 0, g_playerRank, -1, wRank, 64);
+        std::wstring statsStr = L"Gold: " + std::to_wstring(g_playerGold) + L"   |   Health: " + std::to_wstring(g_playerHealth) + L"   |   Rank: " + wRank;
         TextOutW(hdc, 30, 220, statsStr.c_str(), (int)statsStr.length());
 
-        std::wstring statusStr = g_autoMode ? L"Status: Auto-changing aura every 2 seconds..." : L"Status: Manual (Press Space to change aura)";
+        std::wstring statusStr = g_autoMode ? L"Status: Auto-changing aura every 2 seconds..." : L"Status: Manual (Press Space to change aura, R to change rank)";
         SetTextColor(hdc, g_autoMode ? RGB(100, 255, 140) : RGB(200, 200, 200));
         TextOutW(hdc, 30, 250, statusStr.c_str(), (int)statusStr.length());
 
@@ -87,6 +90,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_KEYDOWN: {
         if (wParam == VK_SPACE) {
             g_playerAura += 250;
+            InvalidateRect(hwnd, NULL, TRUE);
+        } else if (wParam == 'R' || wParam == 'r') {
+            static int rankIdx = 0;
+            const char* ranks[] = { "GrandMaster", "ShadowKnight", "ArchMage", "Paladin", "Champion" };
+            rankIdx = (rankIdx + 1) % 5;
+            strncpy_s(g_playerRank, sizeof(g_playerRank), ranks[rankIdx], _TRUNCATE);
             InvalidateRect(hwnd, NULL, TRUE);
         } else if (wParam == VK_BACK) {
             if (g_playerAura >= 100) g_playerAura -= 100;

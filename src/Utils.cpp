@@ -1,6 +1,7 @@
 #include "Utils.h"
 #include <algorithm>
 #include <cctype>
+#include <shellapi.h>
 
 void Logger::Log(const std::string& msg, LogLevel level) {
     auto now = std::chrono::system_clock::now();
@@ -113,3 +114,62 @@ namespace StringUtils {
         }
     }
 }
+
+namespace PrivilegeUtils {
+    bool IsRunningAsAdmin() {
+        BOOL isAdmin = FALSE;
+        PSID adminGroup = nullptr;
+        SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
+        if (AllocateAndInitializeSid(&ntAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID,
+                                     DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &adminGroup)) {
+            CheckTokenMembership(nullptr, adminGroup, &isAdmin);
+            FreeSid(adminGroup);
+        }
+        return isAdmin != FALSE;
+    }
+
+    bool RelaunchAsAdmin(HWND hwndParent, const wchar_t* cmdLine) {
+        wchar_t szExePath[MAX_PATH];
+        if (!GetModuleFileNameW(nullptr, szExePath, MAX_PATH)) {
+            return false;
+        }
+
+        SHELLEXECUTEINFOW sei = { sizeof(sei) };
+        sei.cbSize = sizeof(sei);
+        sei.hwnd = hwndParent;
+        sei.lpVerb = L"runas";
+        sei.lpFile = szExePath;
+        sei.lpParameters = (cmdLine && cmdLine[0] != L'\0') ? cmdLine : nullptr;
+        sei.nShow = SW_NORMAL;
+
+        if (!ShellExecuteExW(&sei)) {
+            return false;
+        }
+        return true;
+    }
+
+    bool EnableDebugPrivilege() {
+        HANDLE hToken = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
+            return false;
+        }
+
+        LUID luid;
+        if (!LookupPrivilegeValueW(nullptr, SE_DEBUG_NAME, &luid)) {
+            CloseHandle(hToken);
+            return false;
+        }
+
+        TOKEN_PRIVILEGES tp;
+        tp.PrivilegeCount = 1;
+        tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+        BOOL res = AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
+        DWORD err = GetLastError();
+        CloseHandle(hToken);
+
+        return (res && err != ERROR_NOT_ALL_ASSIGNED);
+    }
+}
+

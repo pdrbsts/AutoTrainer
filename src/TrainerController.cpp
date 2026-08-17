@@ -51,15 +51,26 @@ void TrainerController::TriggerManualFirstScan() {
         ocr = m_lastOcrResult;
     }
 
-    if (!ocr.isValidNumber) {
-        LOG_WARNING("Manual First Scan failed: OCR has not detected a valid number yet.");
-        return;
+    ScanDataType currentDt = m_scanner.GetCurrentDataType();
+    ScanValue val;
+    val.type = currentDt;
+
+    if (currentDt == ScanDataType::String) {
+        std::string textToScan = !ocr.fullText.empty() ? ocr.fullText : ocr.filteredNumberText;
+        if (textToScan.empty()) {
+            LOG_WARNING("Manual First Scan failed: OCR has not detected any text yet.");
+            return;
+        }
+        val.stringVal = textToScan;
+    } else {
+        if (!ocr.isValidNumber) {
+            LOG_WARNING("Manual First Scan failed: OCR has not detected a valid number yet.");
+            return;
+        }
+        val.intVal = ocr.parsedInt64;
+        val.doubleVal = ocr.parsedDouble;
     }
 
-    ScanValue val;
-    val.type = m_scanner.GetCurrentDataType();
-    val.intVal = ocr.parsedInt64;
-    val.doubleVal = ocr.parsedDouble;
     m_lastScannedValue = val;
 
     m_state = TrainerState::FirstScanning;
@@ -69,7 +80,7 @@ void TrainerController::TriggerManualFirstScan() {
             LOG_SUCCESS("Target locked! Found exact " + std::to_string(count) + " memory addresses.");
         } else if (count > 0) {
             m_state = TrainerState::WaitingForValueChange;
-            LOG_INFO("First scan finished (" + std::to_string(count) + " candidates). Modify aura in game to filter.");
+            LOG_INFO("First scan finished (" + std::to_string(count) + " candidates). Modify target in game to filter.");
         } else {
             m_state = TrainerState::Ready;
             LOG_WARNING("First scan found 0 results for value " + m_lastScannedValue.ToString());
@@ -84,15 +95,26 @@ void TrainerController::TriggerManualNextScan() {
         ocr = m_lastOcrResult;
     }
 
-    if (!ocr.isValidNumber) {
-        LOG_WARNING("Manual Next Scan failed: OCR has not detected a valid number yet.");
-        return;
+    ScanDataType currentDt = m_scanner.GetCurrentDataType();
+    ScanValue val;
+    val.type = currentDt;
+
+    if (currentDt == ScanDataType::String) {
+        std::string textToScan = !ocr.fullText.empty() ? ocr.fullText : ocr.filteredNumberText;
+        if (textToScan.empty()) {
+            LOG_WARNING("Manual Next Scan failed: OCR has not detected any text yet.");
+            return;
+        }
+        val.stringVal = textToScan;
+    } else {
+        if (!ocr.isValidNumber) {
+            LOG_WARNING("Manual Next Scan failed: OCR has not detected a valid number yet.");
+            return;
+        }
+        val.intVal = ocr.parsedInt64;
+        val.doubleVal = ocr.parsedDouble;
     }
 
-    ScanValue val;
-    val.type = m_scanner.GetCurrentDataType();
-    val.intVal = ocr.parsedInt64;
-    val.doubleVal = ocr.parsedDouble;
     m_lastScannedValue = val;
 
     m_state = TrainerState::FilterScanning;
@@ -160,15 +182,25 @@ void TrainerController::WorkerLoop() {
 }
 
 void TrainerController::ProcessOcrFrame(const TrainerOcrResult& ocr) {
-    if (!ocr.isValidNumber || m_scanner.IsScanning()) {
+    if (m_scanner.IsScanning()) {
         return;
     }
 
-    // Check stability (must see same value for N frames to avoid reading mid-animation numbers)
-    if (ocr.filteredNumberText == m_lastStableOcrString) {
+    ScanDataType currentDt = m_scanner.GetCurrentDataType();
+    std::string frameText = (currentDt == ScanDataType::String) ? ocr.fullText : ocr.filteredNumberText;
+
+    if (currentDt != ScanDataType::String && !ocr.isValidNumber) {
+        return;
+    }
+    if (currentDt == ScanDataType::String && frameText.empty()) {
+        return;
+    }
+
+    // Check stability (must see same value for N frames to avoid reading mid-animation numbers/text)
+    if (frameText == m_lastStableOcrString) {
         m_consecutiveStableFrames++;
     } else {
-        m_lastStableOcrString = ocr.filteredNumberText;
+        m_lastStableOcrString = frameText;
         m_consecutiveStableFrames = 1;
         return;
     }
@@ -178,9 +210,13 @@ void TrainerController::ProcessOcrFrame(const TrainerOcrResult& ocr) {
     }
 
     ScanValue currentVal;
-    currentVal.type = m_scanner.GetCurrentDataType();
-    currentVal.intVal = ocr.parsedInt64;
-    currentVal.doubleVal = ocr.parsedDouble;
+    currentVal.type = currentDt;
+    if (currentDt == ScanDataType::String) {
+        currentVal.stringVal = frameText;
+    } else {
+        currentVal.intVal = ocr.parsedInt64;
+        currentVal.doubleVal = ocr.parsedDouble;
+    }
 
     // Check state transitions
     if (m_state == TrainerState::Ready && autoStartFirstScan) {
@@ -194,7 +230,7 @@ void TrainerController::ProcessOcrFrame(const TrainerOcrResult& ocr) {
                 LOG_SUCCESS("Target locked on first scan! (" + std::to_string(count) + " candidates)");
             } else if (count > 0) {
                 m_state = TrainerState::WaitingForValueChange;
-                LOG_INFO("First scan complete (" + std::to_string(count) + " candidates). Now change aura in game!");
+                LOG_INFO("First scan complete (" + std::to_string(count) + " candidates). Now change value in game!");
             } else {
                 m_state = TrainerState::Ready;
                 LOG_WARNING("First scan found 0 candidates.");
@@ -203,14 +239,16 @@ void TrainerController::ProcessOcrFrame(const TrainerOcrResult& ocr) {
     }
     else if (m_state == TrainerState::WaitingForValueChange) {
         bool valueChanged = false;
-        if (currentVal.type == ScanDataType::Int32 || currentVal.type == ScanDataType::Int64) {
+        if (currentVal.type == ScanDataType::String) {
+            valueChanged = (currentVal.stringVal != m_lastScannedValue.stringVal);
+        } else if (currentVal.type == ScanDataType::Int32 || currentVal.type == ScanDataType::Int64) {
             valueChanged = (currentVal.intVal != m_lastScannedValue.intVal);
         } else {
             valueChanged = (std::fabs(currentVal.doubleVal - m_lastScannedValue.doubleVal) > 0.001);
         }
 
         if (valueChanged) {
-            LOG_INFO("AutoTrainer: Detected aura value change from " + m_lastScannedValue.ToString() + 
+            LOG_INFO("AutoTrainer: Detected value change from " + m_lastScannedValue.ToString() + 
                      " -> " + currentVal.ToString() + ". Auto-filtering candidates...");
             
             m_lastScannedValue = currentVal;

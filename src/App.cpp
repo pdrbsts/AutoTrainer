@@ -20,7 +20,7 @@ bool App::Initialize(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* conte
 
     ApplyTheme();
 
-    LOG_INFO("AutoTrainer started.");
+    LOG_INFO("AutoTrainer started [Administrator Mode: Active].");
     m_ocr.Initialize();
     RefreshProcessList();
 
@@ -165,6 +165,8 @@ void App::RenderTopBar() {
     ImGui::TextColored(ImVec4(0.2f, 0.85f, 0.6f, 1.0f), "AUTOTRAINER");
     ImGui::SameLine();
     ImGui::TextDisabled("v1.0 - Screen OCR & Memory Scanner");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.15f, 0.85f, 0.55f, 1.0f), "[ADMIN]");
 
     float comboWidth = 220.0f;
     float refreshBtnWidth = 70.0f;
@@ -337,16 +339,28 @@ void App::RenderLeftPanel() {
     TrainerOcrResult ocr = m_trainer.GetLastOcrResult();
 
     ImGui::BeginChild("OcrBox", ImVec2(0, 95), true);
-    if (ocr.isValidNumber) {
-        ImGui::Text("Recognized Value:");
-        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
-        ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.5f, 1.0f), "%s", StringUtils::FormatNumberWithCommas(ocr.parsedInt64).c_str());
-        ImGui::PopFont();
-        ImGui::TextDisabled("Raw Text: \"%s\" (Latency: %.1f ms)", ocr.fullText.c_str(), ocr.recognitionTimeMs);
-    } else {
-        ImGui::TextDisabled("Searching for numbers in region...");
+    if (m_selectedDataTypeIdx == 4) {
         if (!ocr.fullText.empty()) {
-            ImGui::TextDisabled("Detected text: \"%s\"", ocr.fullText.c_str());
+            ImGui::Text("Recognized Text:");
+            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.5f, 1.0f), "\"%s\"", ocr.fullText.c_str());
+            ImGui::PopFont();
+            ImGui::TextDisabled("Raw Text: \"%s\" (Latency: %.1f ms)", ocr.fullText.c_str(), ocr.recognitionTimeMs);
+        } else {
+            ImGui::TextDisabled("Searching for text in region...");
+        }
+    } else {
+        if (ocr.isValidNumber) {
+            ImGui::Text("Recognized Value:");
+            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.5f, 1.0f), "%s", StringUtils::FormatNumberWithCommas(ocr.parsedInt64).c_str());
+            ImGui::PopFont();
+            ImGui::TextDisabled("Raw Text: \"%s\" (Latency: %.1f ms)", ocr.fullText.c_str(), ocr.recognitionTimeMs);
+        } else {
+            ImGui::TextDisabled("Searching for numbers in region...");
+            if (!ocr.fullText.empty()) {
+                ImGui::TextDisabled("Detected text: \"%s\"", ocr.fullText.c_str());
+            }
         }
     }
     ImGui::EndChild();
@@ -379,13 +393,14 @@ void App::RenderCenterPanel() {
     ImGui::Spacing();
 
     // Controls Row
-    const char* dataTypes[] = { "Int32 (4 Bytes)", "Int64 (8 Bytes)", "Float (4 Bytes)", "Double (8 Bytes)" };
+    const char* dataTypes[] = { "Int32 (4 Bytes)", "Int64 (8 Bytes)", "Float (4 Bytes)", "Double (8 Bytes)", "String (Text)" };
     ImGui::SetNextItemWidth(160);
     if (ImGui::Combo("Data Type", &m_selectedDataTypeIdx, dataTypes, IM_ARRAYSIZE(dataTypes))) {
         ScanDataType dt = ScanDataType::Int32;
         if (m_selectedDataTypeIdx == 1) dt = ScanDataType::Int64;
         else if (m_selectedDataTypeIdx == 2) dt = ScanDataType::Float;
         else if (m_selectedDataTypeIdx == 3) dt = ScanDataType::Double;
+        else if (m_selectedDataTypeIdx == 4) dt = ScanDataType::String;
         m_scanner.SetDataType(dt);
     }
 
@@ -464,15 +479,19 @@ void App::RenderCenterPanel() {
             ImGui::TableSetColumnIndex(2);
             if (m_selectedDataTypeIdx == 0 || m_selectedDataTypeIdx == 1) {
                 ImGui::Text("%s", StringUtils::FormatNumberWithCommas(cand.currentValueInt).c_str());
-            } else {
+            } else if (m_selectedDataTypeIdx == 2 || m_selectedDataTypeIdx == 3) {
                 ImGui::Text("%.4f", cand.currentValueDouble);
+            } else if (m_selectedDataTypeIdx == 4) {
+                ImGui::Text("\"%s\"", cand.currentValueString.c_str());
             }
 
             ImGui::TableSetColumnIndex(3);
             if (m_selectedDataTypeIdx == 0 || m_selectedDataTypeIdx == 1) {
                 ImGui::TextDisabled("%s", StringUtils::FormatNumberWithCommas(cand.previousValueInt).c_str());
-            } else {
+            } else if (m_selectedDataTypeIdx == 2 || m_selectedDataTypeIdx == 3) {
                 ImGui::TextDisabled("%.4f", cand.previousValueDouble);
+            } else if (m_selectedDataTypeIdx == 4) {
+                ImGui::TextDisabled("\"%s\"", cand.previousValueString.c_str());
             }
 
             ImGui::TableSetColumnIndex(4);
@@ -483,6 +502,7 @@ void App::RenderCenterPanel() {
                 val.type = m_scanner.GetCurrentDataType();
                 val.intVal = cand.currentValueInt;
                 val.doubleVal = cand.currentValueDouble;
+                val.stringVal = cand.currentValueString;
                 m_scanner.SetAddressLock(cand.address, locked, val);
             }
 
@@ -492,8 +512,10 @@ void App::RenderCenterPanel() {
                 m_selectedCandidateAddress = cand.address;
                 if (m_selectedDataTypeIdx == 0 || m_selectedDataTypeIdx == 1) {
                     snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "%lld", (long long)cand.currentValueInt);
-                } else {
+                } else if (m_selectedDataTypeIdx == 2 || m_selectedDataTypeIdx == 3) {
                     snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "%.4f", cand.currentValueDouble);
+                } else if (m_selectedDataTypeIdx == 4) {
+                    snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "%s", cand.currentValueString.c_str());
                 }
                 m_requestOpenEditPopup = true;
             }
@@ -519,25 +541,44 @@ void App::RenderCenterPanel() {
         bool enterPressed = ImGui::InputText("##NewValInput", m_customWriteBuffer, sizeof(m_customWriteBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
 
         ImGui::Spacing();
-        ImGui::TextDisabled("Quick Presets:");
-        if (ImGui::Button("+500")) {
-            int64_t val = 0;
-            StringUtils::ParseInt64(m_customWriteBuffer, val);
-            snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "%lld", (long long)(val + 500));
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("+5,000")) {
-            int64_t val = 0;
-            StringUtils::ParseInt64(m_customWriteBuffer, val);
-            snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "%lld", (long long)(val + 5000));
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("999,999")) {
-            snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "999999");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Max 32-bit")) {
-            snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "2147483647");
+        if (m_selectedDataTypeIdx != 4) {
+            ImGui::TextDisabled("Quick Presets:");
+            if (ImGui::Button("+500")) {
+                int64_t val = 0;
+                StringUtils::ParseInt64(m_customWriteBuffer, val);
+                snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "%lld", (long long)(val + 500));
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("+5,000")) {
+                int64_t val = 0;
+                StringUtils::ParseInt64(m_customWriteBuffer, val);
+                snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "%lld", (long long)(val + 5000));
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("999,999")) {
+                snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "999999");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Max 32-bit")) {
+                snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "2147483647");
+            }
+        } else {
+            ImGui::TextDisabled("Quick String Presets:");
+            if (ImGui::Button("GOD_MODE")) {
+                snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "GOD_MODE");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("UNLIMITED")) {
+                snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "UNLIMITED");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("MAX_LEVEL")) {
+                snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "MAX_LEVEL");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("GrandMaster")) {
+                snprintf(m_customWriteBuffer, sizeof(m_customWriteBuffer), "GrandMaster");
+            }
         }
 
         ImGui::Spacing();
@@ -550,9 +591,11 @@ void App::RenderCenterPanel() {
             if (val.type == ScanDataType::Int32 || val.type == ScanDataType::Int64) {
                 StringUtils::ParseInt64(m_customWriteBuffer, val.intVal);
                 val.doubleVal = static_cast<double>(val.intVal);
-            } else {
+            } else if (val.type == ScanDataType::Float || val.type == ScanDataType::Double) {
                 StringUtils::ParseDouble(m_customWriteBuffer, val.doubleVal);
                 val.intVal = static_cast<int64_t>(val.doubleVal);
+            } else if (val.type == ScanDataType::String) {
+                val.stringVal = m_customWriteBuffer;
             }
             m_scanner.WriteValue(m_selectedCandidateAddress, val);
         };

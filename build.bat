@@ -30,10 +30,14 @@ if exist "%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat" (
 
 :COMPILE
 echo.
-echo [1/3] Compiling Windows Resources (version.rc)...
+echo [1/4] Incrementing Build Number in version.rc...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$rc = Join-Path '%~dp0' 'version.rc'; if (Test-Path $rc) { $c = [System.IO.File]::ReadAllText($rc); if ($c -match 'FILEVERSION\s+(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)') { $b = [int]$matches[4] + 1; $v1 = $matches[1] + ',' + $matches[2] + ',' + $matches[3] + ',' + $b; $v2 = $matches[1] + '.' + $matches[2] + '.' + $matches[3] + '.' + $b; $c = $c -replace '(?<=FILEVERSION\s+)\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+', $v1; $c = $c -replace '(?<=PRODUCTVERSION\s+)\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+', $v1; $c = $c -replace '(?<=\""FileVersion\""[\s,]+\"")[0-9\.]+', $v2; $c = $c -replace '(?<=\""ProductVersion\""[\s,]+\"")[0-9\.]+', $v2; [System.IO.File]::WriteAllText($rc, $c); $mf = Join-Path '%~dp0' 'AutoTrainer.manifest'; if (Test-Path $mf) { $m = [System.IO.File]::ReadAllText($mf); $m = $m -replace '(?<=<assemblyIdentity[\s\S]*?version=\"")[0-9\.]+(?=\"")', $v2; [System.IO.File]::WriteAllText($mf, $m); }; Write-Host ('    Version updated to: ' + $v2); } }"
+
+echo.
+echo [2/4] Compiling Windows Resources (version.rc)...
 rc /fo version.res version.rc >nul
 
-echo [2/3] Compiling AutoTrainer.exe (C++20, Direct3D 11, WinRT Media OCR, ImGui)...
+echo [3/4] Compiling AutoTrainer.exe (C++20, Direct3D 11, WinRT Media OCR, ImGui)...
 cl /nologo /O2 /Oi /Ot /MP /utf-8 /permissive- /await:strict /std:c++20 /EHsc ^
     /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DNDEBUG ^
     /Isrc /Iexternal\imgui /Iexternal\imgui\backends ^
@@ -56,7 +60,7 @@ cl /nologo /O2 /Oi /Ot /MP /utf-8 /permissive- /await:strict /std:c++20 /EHsc ^
     version.res ^
     /FeAutoTrainer.exe ^
     /link /SUBSYSTEM:WINDOWS ^
-    d3d11.lib d3dcompiler.lib dxgi.lib dwmapi.lib gdi32.lib gdiplus.lib user32.lib advapi32.lib windowsapp.lib
+    d3d11.lib d3dcompiler.lib dxgi.lib dwmapi.lib gdi32.lib gdiplus.lib user32.lib advapi32.lib shell32.lib windowsapp.lib
 
 if errorlevel 1 (
     echo.
@@ -66,7 +70,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/3] Compiling MockGame.exe (Test RPG Game)...
+echo [4/4] Compiling MockGame.exe (Test RPG Game)...
 cl /nologo /O2 /utf-8 /std:c++20 /EHsc /DUNICODE /D_UNICODE ^
     src\MockGame.cpp ^
     /FeMockGame.exe ^
