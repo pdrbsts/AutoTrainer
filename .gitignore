@@ -1,0 +1,21 @@
+# Build artifacts and binaries
+*.exe
+*.obj
+*.res
+*.pdb
+*.ilk
+*.idb
+*.exp
+*.lib
+
+# IDE and build directories
+.vs/
+build/
+x64/
+Debug/
+Release/
+
+# Temporary and log files
+*.log
+*.tmp
+imgui.ini
